@@ -1,14 +1,20 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import joblib
 
-# Set page configuration
-st.set_page_config(page_title="Lathe Machining Predictor", layout="centered")
+# 1. Page Configuration
+st.set_page_config(
+    page_title="Lathe Machining Predictor",
+    page_icon="⚙️",
+    layout="centered"
+)
 
+# 2. Header & Title
 st.title("⚙️ Lathe Machining Predictor")
-st.write("Predict Surface Roughness and Cutting Temperature for turning operations.")
+st.write("Predict Surface Roughness ($R_a$) and Cutting Temperature ($T$) for turning operations.")
 
-# 1. Load the trained model
+# 3. Load Model Pipeline
 @st.cache_resource
 def load_model():
     return joblib.load('lathe_predictive_model.joblib')
@@ -16,37 +22,51 @@ def load_model():
 try:
     model = load_model()
 except Exception as e:
-    st.error(f"Error loading model: {e}")
+    st.error(f"Error loading model file: {e}")
     st.stop()
 
-# 2. Create the User Interface layout
+# 4. Input Controls
 st.subheader("Input Cutting Parameters")
 
-col1, col2 = st.columns(2)
+col_a, col_b = st.columns(2)
 
-with col1:
-    # Dropdown for Material
-    material = st.selectbox("Workpiece Material", ["Mild Steel", "Aluminum"])
-    
-    # Dropdown for the 5 RPM settings
-    rpm = st.selectbox("Spindle Speed (RPM)", [255, 385, 585, 710, 900])
-
-with col2:
-    # Dropdown for the 12 standard Feed Rates
-    # Note: If your machine's exact gear increments differ slightly, 
-    # you can edit these 12 numbers directly in the brackets!
-    feed = st.selectbox(
-        "Feed Rate (mm/rev)", 
-        [0.054, 0.104, 0.154, 0.204, 0.254, 0.304, 0.354, 0.404, 0.454, 0.504, 0.554, 0.606]
+with col_a:
+    material = st.selectbox(
+        "Workpiece Material",
+        options=["Mild Steel", "Aluminum", "Stainless Steel", "Brass"],
+        index=0
     )
-    
-    # Typing box for Depth of Cut (only number input as requested)
-    depth = st.number_input("Depth of Cut (mm)", min_value=0.1, max_value=2.0, value=0.5, step=0.1)
+    rpm = st.number_input(
+        "Spindle Speed (RPM)",
+        min_value=100,
+        max_value=3000,
+        value=255,
+        step=10
+    )
 
-# 3. Predict Button and Output Display
+with col_b:
+    feed = st.number_input(
+        "Feed Rate (mm/rev)",
+        min_value=0.01,
+        max_value=1.00,
+        value=0.054,
+        step=0.005,
+        format="%.3f"
+    )
+    depth = st.number_input(
+        "Depth of Cut (mm)",
+        min_value=0.1,
+        max_value=5.0,
+        value=0.50,
+        step=0.1,
+        format="%.2f"
+    )
+
+st.write("")
+
+# 5. Prediction Logic & Visual Analytics
 if st.button("Predict Outcomes", type="primary"):
-    
-    # Format the input exactly as the Kaggle model expects it
+    # Create input DataFrame matching model features
     input_data = pd.DataFrame({
         'Material': [material],
         'RPM': [rpm],
@@ -54,20 +74,50 @@ if st.button("Predict Outcomes", type="primary"):
         'Depth': [depth]
     })
     
-    # Run the prediction
+    # Run prediction
     prediction = model.predict(input_data)
-    predicted_temp = prediction[0][0]
-    predicted_roughness = prediction[0][1]
+    temp_pred = prediction[0][0]
+    rough_pred = prediction[0][1]
     
     st.divider()
-    st.subheader("Predicted Results")
     
-    # Display beautiful metric cards
-    res_col1, res_col2 = st.columns(2)
-    with res_col1:
-        st.metric(label="🌡️ Estimated Temperature", value=f"{predicted_temp:.1f} °C")
-    with res_col2:
-        st.metric(label="📏 Surface Roughness (Ra)", value=f"{predicted_roughness:.3f} µm")
-
-    if material == "Aluminum" and rpm < 600:
-        st.caption("⚠️ *Note: Low RPM on Aluminum may cause Built-Up Edge (BUE), leading to unpredictable surface finishes.*")
+    # Styled Metric Cards
+    st.subheader("🎯 Prediction Results")
+    col1, col2 = st.columns(2)
+    col1.metric(
+        label="Cutting Temperature", 
+        value=f"{temp_pred:.2f} °C", 
+        delta="High Heat" if temp_pred > 40 else "Normal", 
+        delta_color="inverse"
+    )
+    col2.metric(
+        label="Surface Roughness", 
+        value=f"{rough_pred:.3f} µm", 
+        delta="Optimal Finish" if rough_pred < 4.0 else "Rough Finish", 
+        delta_color="normal"
+    )
+    
+    st.divider()
+    
+    # Dynamic Parameter Sensitivity Chart
+    st.subheader("📊 Machining Analytics: Feed Rate vs. Roughness")
+    st.caption("Visualizing how varying Feed Rate alters surface roughness under your selected Material, Speed, and Depth.")
+    
+    feed_range = np.linspace(0.02, 0.25, 20)
+    
+    simulated_data = pd.DataFrame({
+        'Material': [material] * 20,
+        'RPM': [rpm] * 20,
+        'Feed': feed_range,
+        'Depth': [depth] * 20
+    })
+    
+    simulated_preds = model.predict(simulated_data)
+    simulated_roughness = simulated_preds[:, 1]
+    
+    chart_data = pd.DataFrame({
+        "Feed Rate (mm/rev)": feed_range,
+        "Roughness (µm)": simulated_roughness
+    }).set_index("Feed Rate (mm/rev)")
+    
+    st.line_chart(chart_data, y="Roughness (µm)", color="#ff4b4b")
